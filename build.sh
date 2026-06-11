@@ -37,7 +37,7 @@ CGO_ENABLED=0 GOOS=windows GOARCH=amd64 \
 cd "$FRONTEND"
 
 echo "==> Installing Node dependencies..."
-npm install
+npm install --no-audit --no-fund
 
 echo "==> Building frontend..."
 npm run build

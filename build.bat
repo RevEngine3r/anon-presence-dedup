@@ -47,7 +47,7 @@ REM ---------------------------------------------------------------------------
 cd /d "%FRONTEND%"
 
 echo =^> Installing Node dependencies...
-npm install
+npm install --no-audit --no-fund
 if ERRORLEVEL 1 ( echo [ERROR] npm install failed & exit /b 1 )
 
 echo =^> Building frontend...
