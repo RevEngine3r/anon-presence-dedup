@@ -9,7 +9,7 @@ OUT="$ROOT/dist"
 
 echo "==> Cleaning output directory..."
 rm -rf "$OUT"
-mkdir -p "$OUT/linux" "$OUT/windows"
+mkdir -p "$OUT/linux" "$OUT/windows" "$OUT/frontend"
 
 # ---------------------------------------------------------------------------
 # Go backend
@@ -43,7 +43,7 @@ echo "==> Building frontend..."
 npm run build
 
 echo "==> Copying frontend dist..."
-cp -r "$FRONTEND/dist" "$OUT/frontend"
+cp -r "$FRONTEND/dist/"* "$OUT/frontend/"
 
 # ---------------------------------------------------------------------------
 # Copy config template
