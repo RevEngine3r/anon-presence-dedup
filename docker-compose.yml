@@ -26,5 +26,18 @@ services:
     depends_on:
       - postgres
 
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    ports:
+      - '80:80'
+      - '443:443'
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/anon-presence.conf:ro
+      - ./frontend/dist:/var/www/anon-presence/dist:ro
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+    depends_on:
+      - backend
+
 volumes:
   pg_data:

@@ -6,7 +6,7 @@ A production-grade system for anonymous client identity, in-memory deduplication
 - **Backend:** Go (no Redis, pure in-memory maps)
 - **Frontend:** React SPA (TypeScript + Vite)
 - **Database:** PostgreSQL
-- **Proxy:** Caddy
+- **Proxy:** nginx
 - **Future:** Kotlin Compose Android client
 
 ## Architecture
@@ -19,6 +19,13 @@ A production-grade system for anonymous client identity, in-memory deduplication
 │  • Local seen_views set (IntersectionObserver)      │
 └────────────────────┬────────────────────────────────┘
                      │ HTTP + WebSocket
+┌────────────────────▼────────────────────────────────┐
+│  nginx (reverse proxy + static files)               │
+│  • /api/* → Go backend (HTTP/1.1 keepalive)         │
+│  • /ws    → Go backend (WebSocket upgrade)           │
+│  • /      → React SPA dist (try_files)               │
+└────────────────────┬────────────────────────────────┘
+                     │
 ┌────────────────────▼────────────────────────────────┐
 │  Go Backend                                          │
 │  • In-memory ViewDedupMap  (sync.Mutex)              │
@@ -46,6 +53,26 @@ POSTGRES_DSN="postgres://user:pass@localhost/db?sslmode=disable" go run ./cmd/se
 cd frontend
 npm install
 npm run dev
+
+# Production (Docker Compose)
+docker compose up -d
+```
+
+## nginx Setup (bare metal)
+
+```bash
+# 1. Build frontend
+cd frontend && npm run build
+sudo mkdir -p /var/www/anon-presence
+sudo cp -r dist /var/www/anon-presence/
+
+# 2. Install config
+sudo cp nginx.conf /etc/nginx/sites-available/anon-presence
+sudo ln -s /etc/nginx/sites-available/anon-presence /etc/nginx/sites-enabled/
+sudo nginx -t && sudo systemctl reload nginx
+
+# 3. TLS with certbot
+sudo certbot --nginx -d example.com
 ```
 
 ## Invariant
