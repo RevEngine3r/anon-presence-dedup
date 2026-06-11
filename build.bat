@@ -33,7 +33,6 @@ set GOOS=windows
 go build -trimpath -ldflags "-s -w" -o "%OUT%\windows\server.exe" .\cmd\server
 if ERRORLEVEL 1 ( echo [ERROR] Windows build failed & exit /b 1 )
 
-REM Reset GOOS/GOARCH so the environment is clean after the script
 set GOOS=
 set GOARCH=
 set CGO_ENABLED=
@@ -44,8 +43,8 @@ REM ---------------------------------------------------------------------------
 cd /d "%FRONTEND%"
 
 echo =^> Installing Node dependencies...
-npm ci
-if ERRORLEVEL 1 ( echo [ERROR] npm ci failed & exit /b 1 )
+npm install
+if ERRORLEVEL 1 ( echo [ERROR] npm install failed & exit /b 1 )
 
 echo =^> Building frontend...
 npm run build
