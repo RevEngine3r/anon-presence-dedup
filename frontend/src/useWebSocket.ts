@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback } from 'react'
+import { useEffect, useRef } from 'react'
 import { CLIENT_ID } from './clientId'
 
 export type WSMessage =
@@ -10,10 +10,6 @@ type Handler = (msg: WSMessage) => void
 
 const WS_URL = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws?client_id=${CLIENT_ID}`
 
-/**
- * Connects once per page load, auto-reconnects on close.
- * Multiple components can share the same underlying socket via the singleton below.
- */
 export function useWebSocket(onMessage: Handler) {
   const handlerRef = useRef<Handler>(onMessage)
   handlerRef.current = onMessage
@@ -45,16 +41,17 @@ const wsManager = (() => {
     }
 
     ws.onclose = () => {
-      setTimeout(connect, 2000) // reconnect after 2s
+      setTimeout(connect, 2000)
     }
   }
 
   connect()
 
   return {
-    subscribe(fn: Subscriber) {
+    // Returns a void cleanup function so useEffect is happy.
+    subscribe(fn: Subscriber): () => void {
       subscribers.add(fn)
-      return () => subscribers.delete(fn)
+      return () => { subscribers.delete(fn) }
     },
   }
 })()
