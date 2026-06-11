@@ -1,9 +1,7 @@
 @echo off
 REM build.bat — builds Go backend (linux/windows amd64) and React frontend dist
-setlocal ENABLEDELAYEDEXPANSION
 
 set ROOT=%~dp0
-REM Strip trailing backslash from ROOT
 if "%ROOT:~-1%"=="\" set ROOT=%ROOT:~0,-1%
 
 set BACKEND=%ROOT%\backend
@@ -21,25 +19,17 @@ REM Go backend
 REM ---------------------------------------------------------------------------
 cd /d "%BACKEND%"
 
-echo =^> Tidying Go modules (generates go.sum)...
+echo =^> Tidying Go modules...
 go mod tidy
-if ERRORLEVEL 1 ( echo [ERROR] go mod tidy failed & exit /b 1 )
+if %ERRORLEVEL% NEQ 0 goto :fail
 
 echo =^> Building backend for Linux amd64...
-set CGO_ENABLED=0
-set GOOS=linux
-set GOARCH=amd64
-go build -trimpath -ldflags "-s -w" -o "%OUT%\linux\server" .\cmd\server
-if ERRORLEVEL 1 ( echo [ERROR] Linux build failed & exit /b 1 )
+cmd /c "set CGO_ENABLED=0&& set GOOS=linux&& set GOARCH=amd64&& go build -trimpath -ldflags "-s -w" -o "%OUT%\linux\server" .\cmd\server"
+if %ERRORLEVEL% NEQ 0 goto :fail
 
 echo =^> Building backend for Windows amd64...
-set GOOS=windows
-go build -trimpath -ldflags "-s -w" -o "%OUT%\windows\server.exe" .\cmd\server
-if ERRORLEVEL 1 ( echo [ERROR] Windows build failed & exit /b 1 )
-
-set GOOS=
-set GOARCH=
-set CGO_ENABLED=
+cmd /c "set CGO_ENABLED=0&& set GOOS=windows&& set GOARCH=amd64&& go build -trimpath -ldflags "-s -w" -o "%OUT%\windows\server.exe" .\cmd\server"
+if %ERRORLEVEL% NEQ 0 goto :fail
 
 REM ---------------------------------------------------------------------------
 REM React frontend
@@ -47,30 +37,34 @@ REM ---------------------------------------------------------------------------
 cd /d "%FRONTEND%"
 
 echo =^> Installing Node dependencies...
-npm install --no-audit --no-fund
-if ERRORLEVEL 1 ( echo [ERROR] npm install failed & exit /b 1 )
+call npm install --no-audit --no-fund
+if %ERRORLEVEL% NEQ 0 goto :fail
 
 echo =^> Building frontend...
-npm run build
-if ERRORLEVEL 1 ( echo [ERROR] npm build failed & exit /b 1 )
+call npm run build
+if %ERRORLEVEL% NEQ 0 goto :fail
 
 REM ---------------------------------------------------------------------------
 REM Copy artefacts
 REM ---------------------------------------------------------------------------
 echo =^> Copying frontend dist...
-xcopy /e /i /y "%FRONTEND%\dist\*" "%OUT%\frontend\"
-if ERRORLEVEL 1 ( echo [ERROR] xcopy frontend dist failed & exit /b 1 )
+xcopy /e /i /q /y "%FRONTEND%\dist\*" "%OUT%\frontend\"
+if %ERRORLEVEL% NEQ 0 goto :fail
 
 echo =^> Copying config templates...
-copy "%ROOT%\server.yml" "%OUT%\linux\server.yml"
-copy "%ROOT%\server.yml" "%OUT%\windows\server.yml"
+copy /y "%ROOT%\server.yml" "%OUT%\linux\server.yml" >nul
+copy /y "%ROOT%\server.yml" "%OUT%\windows\server.yml" >nul
 
 echo.
 echo Build complete. Output:
-echo   %OUT%\linux\server          (Linux amd64 binary)
-echo   %OUT%\linux\server.yml      (config template)
-echo   %OUT%\windows\server.exe    (Windows amd64 binary)
-echo   %OUT%\windows\server.yml    (config template)
-echo   %OUT%\frontend\             (React static dist)
+echo   %OUT%\linux\server
+echo   %OUT%\linux\server.yml
+echo   %OUT%\windows\server.exe
+echo   %OUT%\windows\server.yml
+echo   %OUT%\frontend\
+goto :eof
 
-endlocal
+:fail
+echo.
+echo [ERROR] Build failed at the step above (exit code %ERRORLEVEL%)
+exit /b 1
