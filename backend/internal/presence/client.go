@@ -1,7 +1,2 @@
 package presence
-
-// InitSend initialises the buffered send channel.
-// Called by the handler after creating a Client.
-func (c *Client) InitSend(bufSize int) {
-	c.send = make(chan []byte, bufSize)
-}
+// Client type and its methods are defined in hub.go.

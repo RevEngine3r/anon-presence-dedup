@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"log"
 	"sync"
-	"time"
 
 	"github.com/RevEngine3r/anon-presence-dedup/internal/config"
 	"github.com/gorilla/websocket"
@@ -15,6 +14,19 @@ type Client struct {
 	ClientID string
 	Conn     *websocket.Conn
 	send     chan []byte
+}
+
+// InitSend initialises the buffered send channel.
+func (c *Client) InitSend(bufSize int) { c.send = make(chan []byte, bufSize) }
+
+// WritePump pumps messages from the send channel to the WebSocket.
+func (c *Client) WritePump() {
+	defer c.Conn.Close()
+	for msg := range c.send {
+		if err := c.Conn.WriteMessage(websocket.TextMessage, msg); err != nil {
+			return
+		}
+	}
 }
 
 // Hub manages all WebSocket connections and presence state.
@@ -106,20 +118,8 @@ func (h *Hub) broadcastPresence() {
 }
 
 func (h *Hub) BroadcastReaction(msgID int64, emoji string, count int64) {
-	_ = h.cfg.BroadcastThrottle // throttle logic can be extended here
 	msg, _ := json.Marshal(map[string]any{
 		"type": "REACTION_UPDATE", "id": msgID, "emoji": emoji, "count": count,
 	})
 	h.Broadcast(msg)
-}
-
-func (c *Client) InitSend(bufSize int) { c.send = make(chan []byte, bufSize) }
-
-func (c *Client) WritePump() {
-	defer c.Conn.Close()
-	for msg := range c.send {
-		if err := c.Conn.WriteMessage(websocket.TextMessage, msg); err != nil {
-			return
-		}
-	}
 }
