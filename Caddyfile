@@ -1,0 +1,27 @@
+# Production Caddyfile
+# Replace example.com with your domain.
+
+example.com {
+    # Reverse-proxy API and WebSocket to the Go backend
+    reverse_proxy /api/* localhost:8080
+    reverse_proxy /ws    localhost:8080
+
+    # Serve the React SPA for everything else
+    root * /var/www/anon-presence/dist
+    file_server
+    try_files {path} /index.html
+
+    encode gzip
+
+    header {
+        # Security headers
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options nosniff
+        X-Frame-Options DENY
+        Referrer-Policy strict-origin-when-cross-origin
+    }
+
+    log {
+        output file /var/log/caddy/access.log
+    }
+}

@@ -1,0 +1,30 @@
+version: '3.9'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: anon
+      POSTGRES_PASSWORD: anon
+      POSTGRES_DB: anon_presence
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      - ./backend/migrations/001_init.sql:/docker-entrypoint-initdb.d/001_init.sql
+    ports:
+      - '5432:5432'
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      POSTGRES_DSN: postgres://anon:anon@postgres:5432/anon_presence?sslmode=disable
+    ports:
+      - '8080:8080'
+    depends_on:
+      - postgres
+
+volumes:
+  pg_data:
