@@ -15,10 +15,11 @@ mkdir "%OUT%\windows"
 REM ---------------------------------------------------------------------------
 REM Go backend
 REM ---------------------------------------------------------------------------
-echo =^> Downloading Go dependencies...
 cd /d "%BACKEND%"
-go mod download
-if ERRORLEVEL 1 ( echo [ERROR] go mod download failed & exit /b 1 )
+
+echo =^> Tidying Go modules (generates go.sum)...
+go mod tidy
+if ERRORLEVEL 1 ( echo [ERROR] go mod tidy failed & exit /b 1 )
 
 echo =^> Building backend for Linux amd64...
 set CGO_ENABLED=0
@@ -32,11 +33,17 @@ set GOOS=windows
 go build -trimpath -ldflags "-s -w" -o "%OUT%\windows\server.exe" .\cmd\server
 if ERRORLEVEL 1 ( echo [ERROR] Windows build failed & exit /b 1 )
 
+REM Reset GOOS/GOARCH so the environment is clean after the script
+set GOOS=
+set GOARCH=
+set CGO_ENABLED=
+
 REM ---------------------------------------------------------------------------
 REM React frontend
 REM ---------------------------------------------------------------------------
-echo =^> Installing Node dependencies...
 cd /d "%FRONTEND%"
+
+echo =^> Installing Node dependencies...
 npm ci
 if ERRORLEVEL 1 ( echo [ERROR] npm ci failed & exit /b 1 )
 

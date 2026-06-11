@@ -14,9 +14,10 @@ mkdir -p "$OUT/linux" "$OUT/windows"
 # ---------------------------------------------------------------------------
 # Go backend
 # ---------------------------------------------------------------------------
-echo "==> Downloading Go dependencies..."
 cd "$BACKEND"
-go mod download
+
+echo "==> Tidying Go modules (generates go.sum)..."
+go mod tidy
 
 echo "==> Building backend for Linux amd64..."
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
@@ -33,8 +34,9 @@ CGO_ENABLED=0 GOOS=windows GOARCH=amd64 \
 # ---------------------------------------------------------------------------
 # React frontend
 # ---------------------------------------------------------------------------
-echo "==> Installing Node dependencies..."
 cd "$FRONTEND"
+
+echo "==> Installing Node dependencies..."
 npm ci
 
 echo "==> Building frontend..."
