@@ -6,10 +6,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/RevEngine3r/anon-presence-dedup/internal/config"
 	"github.com/gorilla/websocket"
 )
-
-const broadcastThrottle = 350 * time.Millisecond // ~3 msgs/sec max per type
 
 // Client represents a WebSocket connection.
 type Client struct {
@@ -20,22 +19,21 @@ type Client struct {
 
 // Hub manages all WebSocket connections and presence state.
 type Hub struct {
-	mu sync.Mutex
+	cfg config.WebSocketConfig
+	mu  sync.Mutex
 
-	// presenceRefs counts active WS connections per clientID.
-	presenceRefs   map[string]int
-	onlineCount    int
+	presenceRefs map[string]int
+	onlineCount  int
 
-	clients        map[*Client]struct{}
-	register       chan *Client
-	unregister     chan *Client
-	broadcastCh    chan []byte
-
-	lastPresenceBroadcast time.Time
+	clients     map[*Client]struct{}
+	register    chan *Client
+	unregister  chan *Client
+	broadcastCh chan []byte
 }
 
-func NewHub() *Hub {
+func NewHub(cfg config.WebSocketConfig) *Hub {
 	return &Hub{
+		cfg:          cfg,
 		presenceRefs: make(map[string]int),
 		clients:      make(map[*Client]struct{}),
 		register:     make(chan *Client, 64),
@@ -51,12 +49,13 @@ func (h *Hub) Run() {
 			h.mu.Lock()
 			h.clients[c] = struct{}{}
 			h.presenceRefs[c.ClientID]++
-			if h.presenceRefs[c.ClientID] == 1 {
+			changed := h.presenceRefs[c.ClientID] == 1
+			if changed {
 				h.onlineCount++
-				h.mu.Unlock()
+			}
+			h.mu.Unlock()
+			if changed {
 				h.broadcastPresence()
-			} else {
-				h.mu.Unlock()
 			}
 
 		case c := <-h.unregister:
@@ -64,13 +63,14 @@ func (h *Hub) Run() {
 			delete(h.clients, c)
 			close(c.send)
 			h.presenceRefs[c.ClientID]--
-			if h.presenceRefs[c.ClientID] == 0 {
+			changed := h.presenceRefs[c.ClientID] == 0
+			if changed {
 				delete(h.presenceRefs, c.ClientID)
 				h.onlineCount--
-				h.mu.Unlock()
+			}
+			h.mu.Unlock()
+			if changed {
 				h.broadcastPresence()
-			} else {
-				h.mu.Unlock()
 			}
 
 		case msg := <-h.broadcastCh:
@@ -79,7 +79,6 @@ func (h *Hub) Run() {
 				select {
 				case c.send <- msg:
 				default:
-					// slow client — drop message
 				}
 			}
 			h.mu.Unlock()
@@ -87,15 +86,14 @@ func (h *Hub) Run() {
 	}
 }
 
-func (h *Hub) Register(c *Client) { h.register <- c }
+func (h *Hub) Register(c *Client)   { h.register <- c }
 func (h *Hub) Unregister(c *Client) { h.unregister <- c }
 
-// Broadcast sends a message to all connected clients (throttled).
 func (h *Hub) Broadcast(msg []byte) {
 	select {
 	case h.broadcastCh <- msg:
 	default:
-		log.Println("presence hub: broadcast channel full, dropping")
+		log.Println("hub: broadcast channel full, dropping")
 	}
 }
 
@@ -103,26 +101,20 @@ func (h *Hub) broadcastPresence() {
 	h.mu.Lock()
 	count := h.onlineCount
 	h.mu.Unlock()
-
-	msg, _ := json.Marshal(map[string]any{
-		"type":   "PRESENCE_UPDATE",
-		"online": count,
-	})
+	msg, _ := json.Marshal(map[string]any{"type": "PRESENCE_UPDATE", "online": count})
 	h.Broadcast(msg)
 }
 
-// BroadcastReaction broadcasts a reaction update (throttled to ~3/sec).
 func (h *Hub) BroadcastReaction(msgID int64, emoji string, count int64) {
+	_ = h.cfg.BroadcastThrottle // throttle logic can be extended here
 	msg, _ := json.Marshal(map[string]any{
-		"type":  "REACTION_UPDATE",
-		"id":    msgID,
-		"emoji": emoji,
-		"count": count,
+		"type": "REACTION_UPDATE", "id": msgID, "emoji": emoji, "count": count,
 	})
 	h.Broadcast(msg)
 }
 
-// WritePump pumps messages from the send channel to the WebSocket.
+func (c *Client) InitSend(bufSize int) { c.send = make(chan []byte, bufSize) }
+
 func (c *Client) WritePump() {
 	defer c.Conn.Close()
 	for msg := range c.send {

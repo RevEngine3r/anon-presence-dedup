@@ -1,0 +1,26 @@
+# server.yml — main configuration file
+# Copy this file next to the server binary and edit before running.
+
+server:
+  addr: ":8080"          # listen address
+  read_timeout: 30s
+  write_timeout: 30s
+  idle_timeout: 120s
+
+postgres:
+  dsn: "postgres://anon:anon@localhost:5432/anon_presence?sslmode=disable"
+  max_conns: 20
+  min_conns: 2
+  max_conn_idle_time: 30m
+
+dedup:
+  flush_interval: 30s      # how often pending view/reaction counts are flushed to DB
+  clean_interval: 15m      # how often the RAM dedup map is cleaned up
+  view_ttl: 24h            # entries older than this are pruned
+  max_entries: 2000        # hard cap on ViewDedupMap size
+
+websocket:
+  broadcast_throttle: 350ms  # minimum interval between same-type broadcasts
+
+log:
+  level: info              # debug | info | warn | error

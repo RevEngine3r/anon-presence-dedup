@@ -6,14 +6,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/RevEngine3r/anon-presence-dedup/internal/config"
 	"github.com/jackc/pgx/v5/pgxpool"
-)
-
-const (
-	flushInterval   = 30 * time.Second
-	cleanInterval   = 15 * time.Minute
-	viewTTL         = 24 * time.Hour
-	maxDedupEntries = 2000
 )
 
 // ViewEntry holds the set of clientIDs that have viewed a message.
@@ -30,16 +24,18 @@ type ReactionKey struct {
 
 // Store is the in-memory deduplication state.
 type Store struct {
-	mu sync.Mutex
+	cfg config.DedupConfig
+	mu  sync.Mutex
 
-	viewDedup    map[int64]*ViewEntry        // messageID -> entry
-	pendingViews map[int64]int64             // messageID -> increment
-	reactionDedup map[int64]map[ReactionKey]struct{} // messageID -> set of (clientID,emoji)
-	pendingReacts map[int64]map[string]int64 // messageID -> emoji -> increment
+	viewDedup     map[int64]*ViewEntry
+	pendingViews  map[int64]int64
+	reactionDedup map[int64]map[ReactionKey]struct{}
+	pendingReacts map[int64]map[string]int64
 }
 
-func NewStore() *Store {
+func NewStore(cfg config.DedupConfig) *Store {
 	return &Store{
+		cfg:           cfg,
 		viewDedup:     make(map[int64]*ViewEntry),
 		pendingViews:  make(map[int64]int64),
 		reactionDedup: make(map[int64]map[ReactionKey]struct{}),
@@ -48,7 +44,6 @@ func NewStore() *Store {
 }
 
 // RecordView deduplicates and increments the pending view counter.
-// Returns true if the view was new (not a duplicate).
 func (s *Store) RecordView(messageID int64, clientID string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -58,11 +53,9 @@ func (s *Store) RecordView(messageID int64, clientID string) bool {
 		entry = &ViewEntry{Clients: make(map[string]struct{})}
 		s.viewDedup[messageID] = entry
 	}
-
 	if _, seen := entry.Clients[clientID]; seen {
-		return false // duplicate
+		return false
 	}
-
 	entry.Clients[clientID] = struct{}{}
 	entry.LastTouched = time.Now()
 	s.pendingViews[messageID]++
@@ -70,13 +63,11 @@ func (s *Store) RecordView(messageID int64, clientID string) bool {
 }
 
 // RecordReaction deduplicates and increments the pending reaction counter.
-// Returns true if the reaction was new.
 func (s *Store) RecordReaction(messageID int64, clientID, emoji string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	key := ReactionKey{ClientID: clientID, Emoji: emoji}
-
 	if _, ok := s.reactionDedup[messageID]; !ok {
 		s.reactionDedup[messageID] = make(map[ReactionKey]struct{})
 	}
@@ -84,7 +75,6 @@ func (s *Store) RecordReaction(messageID int64, clientID, emoji string) bool {
 		return false
 	}
 	s.reactionDedup[messageID][key] = struct{}{}
-
 	if _, ok := s.pendingReacts[messageID]; !ok {
 		s.pendingReacts[messageID] = make(map[string]int64)
 	}
@@ -92,9 +82,9 @@ func (s *Store) RecordReaction(messageID int64, clientID, emoji string) bool {
 	return true
 }
 
-// RunFlusher flushes pending counts to Postgres every 30 seconds.
+// RunFlusher flushes pending counts to Postgres on the configured interval.
 func (s *Store) RunFlusher(pool *pgxpool.Pool) {
-	ticker := time.NewTicker(flushInterval)
+	ticker := time.NewTicker(s.cfg.FlushInterval)
 	defer ticker.Stop()
 	for range ticker.C {
 		s.flushViews(pool)
@@ -111,7 +101,6 @@ func (s *Store) flushViews(pool *pgxpool.Pool) {
 	if len(snapshot) == 0 {
 		return
 	}
-
 	ctx := context.Background()
 	tx, err := pool.Begin(ctx)
 	if err != nil {
@@ -119,21 +108,17 @@ func (s *Store) flushViews(pool *pgxpool.Pool) {
 		return
 	}
 	defer tx.Rollback(ctx)
-
 	for msgID, inc := range snapshot {
 		if inc == 0 {
 			continue
 		}
 		_, err = tx.Exec(ctx,
-			`UPDATE messages SET view_count = view_count + $1 WHERE id = $2`,
-			inc, msgID,
-		)
+			`UPDATE messages SET view_count = view_count + $1 WHERE id = $2`, inc, msgID)
 		if err != nil {
 			log.Printf("flushViews update msgID=%d: %v", msgID, err)
 			return
 		}
 	}
-
 	if err = tx.Commit(ctx); err != nil {
 		log.Printf("flushViews commit: %v", err)
 	}
@@ -148,7 +133,6 @@ func (s *Store) flushReactions(pool *pgxpool.Pool) {
 	if len(snapshot) == 0 {
 		return
 	}
-
 	ctx := context.Background()
 	tx, err := pool.Begin(ctx)
 	if err != nil {
@@ -156,34 +140,30 @@ func (s *Store) flushReactions(pool *pgxpool.Pool) {
 		return
 	}
 	defer tx.Rollback(ctx)
-
 	for msgID, emojiMap := range snapshot {
 		for emoji, inc := range emojiMap {
 			if inc == 0 {
 				continue
 			}
 			_, err = tx.Exec(ctx,
-				`INSERT INTO reactions (message_id, emoji, count)
-				 VALUES ($1, $2, $3)
+				`INSERT INTO reactions (message_id, emoji, count) VALUES ($1, $2, $3)
 				 ON CONFLICT (message_id, emoji)
 				 DO UPDATE SET count = reactions.count + EXCLUDED.count`,
-				msgID, emoji, inc,
-			)
+				msgID, emoji, inc)
 			if err != nil {
 				log.Printf("flushReactions upsert: %v", err)
 				return
 			}
 		}
 	}
-
 	if err = tx.Commit(ctx); err != nil {
 		log.Printf("flushReactions commit: %v", err)
 	}
 }
 
-// RunCleaner removes stale ViewDedupMap entries every 15 minutes.
+// RunCleaner removes stale entries on the configured interval.
 func (s *Store) RunCleaner() {
-	ticker := time.NewTicker(cleanInterval)
+	ticker := time.NewTicker(s.cfg.CleanInterval)
 	defer ticker.Stop()
 	for range ticker.C {
 		s.clean()
@@ -194,35 +174,31 @@ func (s *Store) clean() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	cutoff := time.Now().Add(-viewTTL)
-
+	cutoff := time.Now().Add(-s.cfg.ViewTTL)
 	for msgID, entry := range s.viewDedup {
 		if entry.LastTouched.Before(cutoff) {
 			delete(s.viewDedup, msgID)
 		}
 	}
 
-	// Enforce max entries: remove oldest if over limit.
-	if len(s.viewDedup) > maxDedupEntries {
-		// collect and sort by LastTouched, remove oldest
-		type entry struct {
-			id  int64
-			ts  time.Time
+	if len(s.viewDedup) > s.cfg.MaxEntries {
+		type kv struct {
+			id int64
+			ts time.Time
 		}
-		entries := make([]entry, 0, len(s.viewDedup))
+		entries := make([]kv, 0, len(s.viewDedup))
 		for id, e := range s.viewDedup {
-			entries = append(entries, entry{id, e.LastTouched})
+			entries = append(entries, kv{id, e.LastTouched})
 		}
-		// simple selection: remove entries until within limit
-		for len(s.viewDedup) > maxDedupEntries {
-			oldestIdx := 0
+		for len(s.viewDedup) > s.cfg.MaxEntries {
+			oldest := 0
 			for i, e := range entries {
-				if e.ts.Before(entries[oldestIdx].ts) {
-					oldestIdx = i
+				if e.ts.Before(entries[oldest].ts) {
+					oldest = i
 				}
 			}
-			delete(s.viewDedup, entries[oldestIdx].id)
-			entries = append(entries[:oldestIdx], entries[oldestIdx+1:]...)
+			delete(s.viewDedup, entries[oldest].id)
+			entries = append(entries[:oldest], entries[oldest+1:]...)
 		}
 	}
 }
