@@ -1,11 +1,12 @@
 package main
 
 import (
-	"flag"
+	"context"
 	"log"
 	"net/http"
+	"os"
+	"time"
 
-	"github.com/RevEngine3r/anon-presence-dedup/internal/config"
 	"github.com/RevEngine3r/anon-presence-dedup/internal/db"
 	"github.com/RevEngine3r/anon-presence-dedup/internal/dedup"
 	"github.com/RevEngine3r/anon-presence-dedup/internal/handlers"
@@ -13,37 +14,33 @@ import (
 )
 
 func main() {
-	cfgPath := flag.String("config", "", "path to server.yml (default: ./server.yml)")
-	flag.Parse()
+	ctx := context.Background()
 
-	cfg, err := config.Load(*cfgPath)
-	if err != nil {
-		log.Fatalf("config: %v", err)
-	}
+	dsn := os.Getenv("DATABASE_URL")
+	if dsn == "" { dsn = "postgres://postgres:postgres@localhost:5432/binahayat?sslmode=disable" }
 
-	pool, err := db.Connect(cfg.Postgres)
-	if err != nil {
-		log.Fatalf("db connect: %v", err)
-	}
+	adminUser := os.Getenv("ADMIN_USER")
+	if adminUser == "" { adminUser = "admin" }
+	adminPass := os.Getenv("ADMIN_PASS")
+	if adminPass == "" { adminPass = "admin1234" }
+
+	addr := os.Getenv("LISTEN_ADDR")
+	if addr == "" { addr = ":8080" }
+
+	pool, err := db.Connect(ctx, dsn)
+	if err != nil { log.Fatalf("db connect: %v", err) }
 	defer pool.Close()
 
-	dedupStore := dedup.NewStore(cfg.Dedup)
-	presenceHub := presence.NewHub(cfg.WebSocket)
+	store := dedup.NewStore()
+	hub   := presence.NewHub()
 
-	go dedupStore.RunFlusher(pool)
-	go dedupStore.RunCleaner()
-	go presenceHub.Run()
+	go store.RunFlusher(ctx, pool, 30*time.Second)
+	go store.RunCleaner(ctx, 15*time.Minute)
 
-	mux := handlers.NewRouter(dedupStore, presenceHub, pool)
+	router := handlers.NewRouter(store, hub, pool, adminUser, adminPass)
 
-	srv := &http.Server{
-		Addr:         cfg.Server.Addr,
-		Handler:      mux,
-		ReadTimeout:  cfg.Server.ReadTimeout,
-		WriteTimeout: cfg.Server.WriteTimeout,
-		IdleTimeout:  cfg.Server.IdleTimeout,
+	log.Printf("listening on %s", addr)
+	if err := http.ListenAndServe(addr, router); err != nil {
+		log.Fatalf("server: %v", err)
 	}
-
-	log.Printf("server listening on %s", cfg.Server.Addr)
-	log.Fatal(srv.ListenAndServe())
 }
